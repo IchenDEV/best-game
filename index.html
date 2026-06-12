@@ -94,7 +94,11 @@
   #subtitle{margin-top:10px;font-size:clamp(13px,2.4vw,18px);letter-spacing:10px;color:#9fe8ff;text-shadow:0 0 12px rgba(25,247,255,.5)}
   #tagline{margin-top:18px;font-size:13px;color:#7da8bb;letter-spacing:2px;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
   #bestLine{margin-top:26px;font-size:14px;color:var(--gold);letter-spacing:2px;text-shadow:0 0 10px rgba(255,181,46,.5)}
-  #menu .btn.primary{margin-top:26px;animation:pulse 2s infinite}
+  #careerLine,#saveLine{margin-top:9px;font-size:12px;color:#8fd8e8;letter-spacing:1px;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
+  #saveLine{color:#ffd9a0;text-shadow:0 0 10px rgba(255,181,46,.35)}
+  .menuActions{margin-top:26px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  #menu .btn.primary{animation:pulse 2s infinite}
+  #btnContinue.hidden{display:none}
   @keyframes pulse{0%,100%{box-shadow:0 0 14px rgba(25,247,255,.25)}50%{box-shadow:0 0 34px rgba(25,247,255,.55)}}
   #controls{margin-top:30px;font-size:12px;color:#6f93a8;letter-spacing:1px;line-height:2;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
   #controls b{color:#aee9f7;font-weight:700}
@@ -150,11 +154,17 @@
   @keyframes toastAnim{0%{opacity:0;transform:translate(-50%,14px)}15%{opacity:1;transform:translate(-50%,0)}80%{opacity:1}100%{opacity:0}}
 
   @media (max-width:700px){
+    #title{font-size:42px;letter-spacing:4px;line-height:1;max-width:94vw;text-align:center}
+    #subtitle{letter-spacing:7px}
+    #tagline,#controls{max-width:90vw;line-height:1.7}
+    #careerLine,#saveLine{max-width:90vw;line-height:1.55}
     #hpWrap{min-width:170px;padding:8px 10px}
     #scoreWrap{min-width:120px;padding:8px 12px} #score{font-size:20px}
     #btnMute{top:64px;right:14px} #btnPause{top:112px;right:14px}
     .panel{padding:24px 18px} #goStats{grid-template-columns:1fr 1fr;gap:8px 12px}
     .card{width:42vw;min-width:130px;padding:14px 10px 12px} .card .ico{font-size:26px} .card .nm{font-size:14px}
+    .menuActions{flex-direction:column;align-items:center}
+    .menuActions .btn{width:min(82vw,320px);padding-left:20px;padding-right:20px}
   }
 </style>
 </head>
@@ -196,7 +206,12 @@
   <div id="subtitle">霓 虹 风 暴</div>
   <div id="tagline">一个人，一艘船，无尽的几何风暴。坚持住，变强，活下去。</div>
   <div id="bestLine"></div>
-  <button id="btnStart" class="btn primary">进入风暴</button>
+  <div id="careerLine"></div>
+  <div id="saveLine"></div>
+  <div class="menuActions">
+    <button id="btnContinue" class="btn primary hidden">继续存档</button>
+    <button id="btnStart" class="btn primary">开始新局</button>
+  </div>
   <div id="controls"></div>
 </div>
 
@@ -212,6 +227,7 @@
     <div class="volRow">音量 <input type="range" id="volSlider" min="0" max="100" value="70"><span id="volText">70</span></div>
     <div class="btnRow">
       <button id="btnResume" class="btn primary small">继续</button>
+      <button id="btnSave" class="btn small">保存</button>
       <button id="btnRestart" class="btn small">重开</button>
       <button id="btnQuit" class="btn small">主菜单</button>
     </div>
@@ -228,6 +244,8 @@
       <div>抵达波次<b id="stWave">1</b></div>
       <div>击坠数<b id="stKills">0</b></div>
       <div>最终等级<b id="stLevel">1</b></div>
+      <div>本局经验<b id="stCareerXp">+0</b></div>
+      <div>账号等级<b id="stCareerLevel">LV 1</b></div>
     </div>
     <div class="btnRow">
       <button id="btnAgain" class="btn primary small">再来一局</button>
@@ -255,8 +273,82 @@ const expDamp = (cur, tgt, rate, dt) => lerp(tgt, cur, Math.exp(-rate*dt));
 
 const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v===null ? d : JSON.parse(v); }catch(e){ return d; } },
-  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
+  remove(k){ try{ localStorage.removeItem(k); }catch(e){} }
 };
+
+const STORAGE = {
+  best: 'ns_best',
+  muted: 'ns_muted',
+  volume: 'ns_vol',
+  profile: 'ns_profile_v1',
+  run: 'ns_run_v1'
+};
+const PROFILE_VERSION = 1;
+const RUN_SAVE_VERSION = 1;
+const PROFILE_DEFAULT = Object.freeze({
+  version: PROFILE_VERSION,
+  careerLevel: 1,
+  careerXp: 0,
+  runs: 0,
+  totalScore: 0,
+  totalKills: 0,
+  totalTime: 0,
+  bestScore: 0,
+  bestWave: 1,
+  bestRunLevel: 1,
+  bestSurvival: 0,
+  lastRun: null,
+  updatedAt: 0
+});
+
+const finiteNumber = (v, d=0) => Number.isFinite(Number(v)) ? Number(v) : d;
+function careerXpNext(level){
+  return Math.round(90 + level*45 + level*level*18);
+}
+function normalizeProfile(raw){
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const p = {...PROFILE_DEFAULT, ...src, version: PROFILE_VERSION};
+  p.careerLevel = Math.max(1, Math.floor(finiteNumber(p.careerLevel, 1)));
+  p.careerXp = Math.max(0, Math.floor(finiteNumber(p.careerXp, 0)));
+  p.runs = Math.max(0, Math.floor(finiteNumber(p.runs, 0)));
+  p.totalScore = Math.max(0, Math.floor(finiteNumber(p.totalScore, 0)));
+  p.totalKills = Math.max(0, Math.floor(finiteNumber(p.totalKills, 0)));
+  p.totalTime = Math.max(0, finiteNumber(p.totalTime, 0));
+  p.bestScore = Math.max(Math.floor(finiteNumber(p.bestScore, 0)), Math.floor(finiteNumber(store.get(STORAGE.best, 0), 0)));
+  p.bestWave = Math.max(1, Math.floor(finiteNumber(p.bestWave, 1)));
+  p.bestRunLevel = Math.max(1, Math.floor(finiteNumber(p.bestRunLevel, 1)));
+  p.bestSurvival = Math.max(0, finiteNumber(p.bestSurvival, 0));
+  while(p.careerXp >= careerXpNext(p.careerLevel)){
+    p.careerXp -= careerXpNext(p.careerLevel);
+    p.careerLevel++;
+  }
+  return p;
+}
+let profile = normalizeProfile(store.get(STORAGE.profile, null));
+function persistProfile(){
+  profile.updatedAt = Date.now();
+  store.set(STORAGE.profile, profile);
+}
+function careerBonus(){
+  const rank = Math.max(0, profile.careerLevel - 1);
+  return {
+    maxhp: rank * 3,
+    dmgMul: 1 + Math.min(0.36, rank * 0.018),
+    speedMul: 1 + Math.min(0.14, rank * 0.006),
+    magnetMul: 1 + Math.min(0.32, rank * 0.014),
+    xpMul: 1 + Math.min(0.18, rank * 0.008)
+  };
+}
+function applyCareerBonus(p){
+  const b = careerBonus();
+  p.maxhp += b.maxhp;
+  p.hp = p.maxhp;
+  p.dmg *= b.dmgMul;
+  p.speed *= b.speedMul;
+  p.magnet *= b.magnetMul;
+  p.xpGain *= b.xpMul;
+}
 
 window.__errors = [];
 window.onerror = (m, s, l, c) => { window.__errors.push(m + ' @' + l + ':' + c); };
@@ -309,7 +401,7 @@ function neonStroke(color, w=2){
 /* ---------- 音频引擎（全部合成，无素材） ---------- */
 const AudioEngine = {
   ctx: null, master: null, sfxGain: null, musGain: null,
-  muted: store.get('ns_muted', false), volume: store.get('ns_vol', 0.7),
+  muted: store.get(STORAGE.muted, false), volume: store.get(STORAGE.volume, 0.7),
   init(){
     if(this.ctx) return;
     try{
@@ -509,7 +601,7 @@ const state = {
   time: 0, wave: 1, waveTimer: 0, waveLen: 26,
   score: 0, displayScore: 0, combo: 0, comboTimer: 0,
   kills: 0, trauma: 0, timeScale: 1, hitStop: 0,
-  boss: null, bossNum: 0, best: store.get('ns_best', 0),
+  boss: null, bossNum: 0, best: profile.bestScore,
   pendingLevels: 0, dying: 0
 };
 const cam = { x: 0, y: 0, sx: 0, sy: 0 };
@@ -518,9 +610,174 @@ let player = null;
 let bullets = [], ebullets = [], enemies = [], gems = [], hearts = [],
     particles = [], texts = [], rings = [], missiles = [], spawnMarks = [], demoShapes = [];
 let enemyIdSeq = 1, spawnTimer = 0;
+let runSaveTimer = 0;
+
+function clonePlain(v){
+  return JSON.parse(JSON.stringify(v));
+}
+function formatTime(seconds){
+  const s = Math.max(0, Math.floor(seconds || 0));
+  return Math.floor(s/60) + ':' + String(s % 60).padStart(2, '0');
+}
+function calcRunCareerXp(){
+  if(!player) return 0;
+  return Math.max(10, Math.round(
+    state.score/20 +
+    state.kills*2.4 +
+    state.wave*12 +
+    state.time*1.35 +
+    player.level*7
+  ));
+}
+function finalizeRunProfile(){
+  const gainedXp = calcRunCareerXp();
+  const beforeLevel = profile.careerLevel;
+  profile.runs++;
+  profile.totalScore += Math.max(0, Math.floor(state.score));
+  profile.totalKills += Math.max(0, Math.floor(state.kills));
+  profile.totalTime += Math.max(0, state.time);
+  profile.bestScore = Math.max(profile.bestScore, Math.floor(state.score));
+  profile.bestWave = Math.max(profile.bestWave, Math.floor(state.wave));
+  profile.bestRunLevel = Math.max(profile.bestRunLevel, Math.floor(player ? player.level : 1));
+  profile.bestSurvival = Math.max(profile.bestSurvival, state.time);
+  profile.careerXp += gainedXp;
+  let levelsGained = 0;
+  while(profile.careerXp >= careerXpNext(profile.careerLevel)){
+    profile.careerXp -= careerXpNext(profile.careerLevel);
+    profile.careerLevel++;
+    levelsGained++;
+  }
+  profile.lastRun = {
+    at: Date.now(),
+    score: Math.floor(state.score),
+    wave: Math.floor(state.wave),
+    kills: Math.floor(state.kills),
+    time: Math.max(0, state.time),
+    runLevel: player ? player.level : 1,
+    careerXp: gainedXp,
+    careerLevel: profile.careerLevel
+  };
+  persistProfile();
+  return {gainedXp, beforeLevel, afterLevel: profile.careerLevel, levelsGained};
+}
+function buildRunSnapshot(){
+  if(!player || player.dead || (state.mode !== 'play' && state.mode !== 'pause')) return null;
+  return {
+    version: RUN_SAVE_VERSION,
+    savedAt: Date.now(),
+    state: {
+      time: state.time,
+      wave: state.wave,
+      waveTimer: state.waveTimer,
+      waveLen: state.waveLen,
+      score: state.score,
+      displayScore: state.displayScore,
+      combo: state.combo,
+      comboTimer: state.comboTimer,
+      kills: state.kills,
+      trauma: state.trauma,
+      bossNum: state.bossNum,
+      pendingLevels: state.pendingLevels
+    },
+    bossId: state.boss ? state.boss.id : null,
+    player: clonePlain(player),
+    upgradeTaken: clonePlain(upgradeTaken),
+    enemyIdSeq,
+    spawnTimer,
+    hpGhostW,
+    bullets: clonePlain(bullets),
+    ebullets: clonePlain(ebullets),
+    enemies: clonePlain(enemies),
+    gems: clonePlain(gems),
+    hearts: clonePlain(hearts),
+    missiles: clonePlain(missiles.map(m => ({...m, target:null, targetId:m.target ? m.target.id : null}))),
+    spawnMarks: clonePlain(spawnMarks)
+  };
+}
+function getRunSave(){
+  const save = store.get(STORAGE.run, null);
+  if(!save || save.version !== RUN_SAVE_VERSION || !save.player || !save.state) return null;
+  return save;
+}
+function saveRun(manual=false){
+  const snapshot = buildRunSnapshot();
+  if(!snapshot) return false;
+  store.set(STORAGE.run, snapshot);
+  if(manual) toastShow('当前战局已保存');
+  refreshBest();
+  return true;
+}
+function clearRunSave(){
+  store.remove(STORAGE.run);
+  refreshBest();
+}
+function restoreRun(save){
+  AudioEngine.init(); AudioEngine.resume();
+  player = clonePlain(save.player);
+  bullets = clonePlain(save.bullets || []);
+  ebullets = clonePlain(save.ebullets || []);
+  enemies = clonePlain(save.enemies || []);
+  gems = clonePlain(save.gems || []);
+  hearts = clonePlain(save.hearts || []);
+  missiles = clonePlain(save.missiles || []).map(m => ({...m, target:null}));
+  particles = []; texts = []; rings = [];
+  spawnMarks = clonePlain(save.spawnMarks || []);
+  upgradeTaken = clonePlain(save.upgradeTaken || {});
+  currentChoices = [];
+  enemyIdSeq = Math.max(
+    Math.floor(finiteNumber(save.enemyIdSeq, 1)),
+    enemies.reduce((max, e) => Math.max(max, Math.floor(finiteNumber(e.id, 0)) + 1), 1)
+  );
+  spawnTimer = finiteNumber(save.spawnTimer, 1.2);
+  hpGhostW = clamp(finiteNumber(save.hpGhostW, 100), 0, 100);
+  Object.assign(state, {
+    mode:'play',
+    time: finiteNumber(save.state.time, 0),
+    wave: Math.max(1, Math.floor(finiteNumber(save.state.wave, 1))),
+    waveTimer: finiteNumber(save.state.waveTimer, 0),
+    waveLen: finiteNumber(save.state.waveLen, 26),
+    score: Math.max(0, Math.floor(finiteNumber(save.state.score, 0))),
+    displayScore: Math.max(0, finiteNumber(save.state.displayScore, save.state.score || 0)),
+    combo: Math.max(0, Math.floor(finiteNumber(save.state.combo, 0))),
+    comboTimer: Math.max(0, finiteNumber(save.state.comboTimer, 0)),
+    kills: Math.max(0, Math.floor(finiteNumber(save.state.kills, 0))),
+    trauma: 0,
+    timeScale: 1,
+    hitStop: 0,
+    boss:null,
+    bossNum: Math.max(0, Math.floor(finiteNumber(save.state.bossNum, 0))),
+    pendingLevels: Math.max(0, Math.floor(finiteNumber(save.state.pendingLevels, 0))),
+    dying: 0
+  });
+  state.boss = enemies.find(e => e.id === save.bossId) || enemies.find(e => e.type === 'boss') || null;
+  cam.x = player.x - W/2; cam.y = player.y - H/2;
+  runSaveTimer = 0;
+  enterRunUI();
+  $('waveLabel').textContent = '第 ' + state.wave + ' 波';
+  bannerShow('存 档 继 续', false);
+  Music.start();
+}
+function continueSavedRun(){
+  const save = getRunSave();
+  if(!save){
+    refreshBest();
+    toastShow('没有可用存档');
+    return;
+  }
+  SFX.click();
+  restoreRun(save);
+}
+function autosaveRun(dt){
+  if(state.mode !== 'play' || !player || player.dead) return;
+  runSaveTimer += dt;
+  if(runSaveTimer >= 8){
+    runSaveTimer = 0;
+    saveRun(false);
+  }
+}
 
 function newPlayer(){
-  return {
+  const p = {
     x: ARENA.w/2, y: ARENA.h/2, vx: 0, vy: 0, r: 13,
     hp: 100, maxhp: 100, speed: 265, aim: 0,
     fireTimer: 0, fireRate: 5, dmg: 12, projCount: 1, pierce: 0, bounce: 0,
@@ -530,6 +787,8 @@ function newPlayer(){
     blades: 0, bladeAng: 0, missileLv: 0, missileTimer: 0, novaLv: 0, leechLv: 0,
     dead: false, trail: 0
   };
+  applyCareerBonus(p);
+  return p;
 }
 
 /* ---------- 升级池 ---------- */
@@ -1259,6 +1518,7 @@ function update(dt){
     if(state.dying <= 0) showGameOver();
   }
   if(state.pendingLevels > 0 && state.mode === 'play' && !player.dead) openLevelup();
+  autosaveRun(dt);
 }
 
 /* ---------- 摄像机 ---------- */
@@ -1557,8 +1817,19 @@ function refreshHUD(){
 }
 
 /* ---------- 流程控制 ---------- */
+function enterRunUI(){
+  $('menu').classList.add('hidden');
+  $('gameover').classList.add('hidden');
+  $('pauseMenu').classList.add('hidden');
+  $('levelup').classList.add('hidden');
+  $('hud').classList.add('show');
+  $('btnPause').classList.add('show');
+  $('btnMute').classList.add('show');
+}
+
 function startGame(){
   AudioEngine.init(); AudioEngine.resume();
+  clearRunSave();
   player = newPlayer();
   bullets = []; ebullets = []; enemies = []; gems = []; hearts = [];
   particles = []; texts = []; rings = []; missiles = []; spawnMarks = [];
@@ -1569,17 +1840,12 @@ function startGame(){
     boss:null, bossNum:0, pendingLevels:0, dying:0
   });
   spawnTimer = 1.2;
+  runSaveTimer = 0;
   cam.x = player.x - W/2; cam.y = player.y - H/2;
   hpGhostW = 100;
   if(AudioEngine.musGain) AudioEngine.musGain.gain.value = 0.5;  // 从暂停中重开时恢复音乐音量
 
-  $('menu').classList.add('hidden');
-  $('gameover').classList.add('hidden');
-  $('pauseMenu').classList.add('hidden');
-  $('levelup').classList.add('hidden');
-  $('hud').classList.add('show');
-  $('btnPause').classList.add('show');
-  $('btnMute').classList.add('show');
+  enterRunUI();
   $('waveLabel').textContent = '第 1 波';
 
   bannerShow('生 存', false);
@@ -1596,14 +1862,20 @@ function showGameOver(){
   state.timeScale = 1;
   Music.stop();
   const isBest = state.score > state.best;
-  if(isBest){ state.best = state.score; store.set('ns_best', state.best); }
+  if(isBest){ state.best = state.score; store.set(STORAGE.best, state.best); }
+  const careerResult = finalizeRunProfile();
+  state.best = Math.max(state.best, profile.bestScore);
+  clearRunSave();
   $('newBest').style.display = isBest ? 'block' : 'none';
   $('goScore').textContent = state.score.toLocaleString();
-  const mm = Math.floor(state.time/60), ss = Math.floor(state.time%60);
-  $('stTime').textContent = mm + ':' + String(ss).padStart(2, '0');
+  $('stTime').textContent = formatTime(state.time);
   $('stWave').textContent = state.wave;
   $('stKills').textContent = state.kills;
   $('stLevel').textContent = player.level;
+  $('stCareerXp').textContent = '+' + careerResult.gainedXp.toLocaleString();
+  $('stCareerLevel').textContent = careerResult.levelsGained > 0
+    ? 'LV ' + careerResult.beforeLevel + ' -> ' + careerResult.afterLevel
+    : 'LV ' + careerResult.afterLevel;
   $('gameover').classList.remove('hidden');
   $('hud').classList.remove('show');
 }
@@ -1624,6 +1896,7 @@ function backToMenu(){
 
 function setPause(on){
   if(on && state.mode === 'play'){
+    saveRun(false);
     state.mode = 'pause';
     $('pauseMenu').classList.remove('hidden');
     if(AudioEngine.musGain) AudioEngine.musGain.gain.value = 0.15;
@@ -1639,14 +1912,23 @@ function togglePause(){
 }
 function toggleMute(){
   AudioEngine.muted = !AudioEngine.muted;
-  store.set('ns_muted', AudioEngine.muted);
+  store.set(STORAGE.muted, AudioEngine.muted);
   AudioEngine.applyVolume();
   $('btnMute').textContent = AudioEngine.muted ? '✕' : '♪';
   $('btnMute').style.opacity = AudioEngine.muted ? 0.5 : 1;
 }
 
 function refreshBest(){
-  $('bestLine').textContent = state.best > 0 ? '历史最佳 ' + state.best.toLocaleString() : '尚无纪录 —— 写下第一笔';
+  $('bestLine').textContent = state.best > 0 ? '历史最佳 ' + state.best.toLocaleString() : '尚无纪录，写下第一笔';
+  $('careerLine').textContent = '账号 LV ' + profile.careerLevel +
+    ' · 经验 ' + Math.floor(profile.careerXp).toLocaleString() + ' / ' + careerXpNext(profile.careerLevel).toLocaleString() +
+    ' · 已玩 ' + profile.runs.toLocaleString() + ' 局' +
+    ' · 最佳波次 ' + profile.bestWave;
+  const save = getRunSave();
+  $('btnContinue').classList.toggle('hidden', !save);
+  $('saveLine').textContent = save
+    ? '存档 第 ' + save.state.wave + ' 波 · ' + formatTime(save.state.time) + ' · 分数 ' + Math.floor(save.state.score).toLocaleString()
+    : '暂无进行中的战局';
 }
 
 /* ---------- 菜单装饰 ---------- */
@@ -1674,17 +1956,19 @@ function updateDemo(dt){
 
 /* ---------- UI 绑定 ---------- */
 $('btnStart').onclick = () => { SFX.click(); startGame(); };
+$('btnContinue').onclick = () => continueSavedRun();
 $('btnAgain').onclick = () => { SFX.click(); startGame(); };
 $('btnMenu').onclick = () => { SFX.click(); backToMenu(); };
 $('btnResume').onclick = () => { SFX.click(); setPause(false); };
+$('btnSave').onclick = () => { SFX.click(); saveRun(true); };
 $('btnRestart').onclick = () => { SFX.click(); startGame(); };
-$('btnQuit').onclick = () => { SFX.click(); backToMenu(); };
+$('btnQuit').onclick = () => { SFX.click(); saveRun(false); backToMenu(); };
 $('btnPause').onclick = () => togglePause();
 $('btnMute').onclick = () => toggleMute();
 $('volSlider').oninput = e => {
   AudioEngine.volume = e.target.value/100;
   $('volText').textContent = e.target.value;
-  store.set('ns_vol', AudioEngine.volume);
+  store.set(STORAGE.volume, AudioEngine.volume);
   if(AudioEngine.muted) toggleMute(); else AudioEngine.applyVolume();
 };
 $('volSlider').value = Math.round(AudioEngine.volume*100);
@@ -1695,7 +1979,7 @@ $('controls').innerHTML = touch.enabled
   ? '<b>左半屏</b> 虚拟摇杆移动 · <b>右半屏</b> 摇杆瞄准射击<br>松开右摇杆自动索敌 · 右下角按钮<b>冲刺</b>'
   : '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · <b>鼠标</b> 瞄准 · 自动开火<br>' +
     '<kbd>空格</kbd> 相位冲刺（无敌帧） · <kbd>P</kbd> 暂停 · <kbd>M</kbd> 静音<br>' +
-    '<span style="color:#5e7f93">收集经验水晶升级，三选一构筑你的火力。每 5 波将有巨像降临。</span>';
+    '<span style="color:#5e7f93">拾取经验水晶升级，三选一构筑你的火力。每 5 波将有巨像降临。</span>';
 refreshBest();
 initDemoShapes();
 
